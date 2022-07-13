@@ -1,4 +1,6 @@
 # %%
+import asyncio
+import aiohttp
 import json
 import time
 import pandas as pd
@@ -12,10 +14,21 @@ from autohome_dealer import Autohome_Dealer
 # %%
 
 
+async def aiohttp_fetch(session, url, data):
+    async with session.post(url, data=data) as response:
+        return await response.text(), response.status
+
+
+async def aiohttp_main(url, data):
+    async with aiohttp.ClientSession() as session:
+        response, status_code = await aiohttp_fetch(session, url, data)
+        return response, status_code
+
+
 class Autohome_Sale(Async_Spider):
     name = 'autohome_sale'
 
-    def __init__(self, max_retry=3, async_num=100, threading_init_driver=False, group_num=100, max_update_interval=90, sleep=1):
+    def __init__(self, max_retry=3, async_num=100, threading_init_driver=False, group_num=200, max_update_interval=90, sleep=1):
         super().__init__(max_retry=max_retry,
                          async_num=async_num,
                          threading_init_driver=threading_init_driver)
@@ -166,11 +179,19 @@ class Autohome_Sale(Async_Spider):
                 pbar.update(1)
                 time.sleep(self.sleep)
                 data = self.make_data_payload(model_name, province_id)
-                response = self.session.post(self.url_api, data=data)
-                if response.status_code == '200':
+                loop = self.init_async_loop()
+                response, status_code = loop.run_until_complete(
+                    aiohttp_main(self.url_api, data=data))
+                if status_code == 200:
                     _df_sale = self.fetch_df_sale_from_response(response)
                 else:
                     _df_sale = self.process_404(model_name, province_id)
+
+                # response = self.session.post(self.url_api, data=data)
+                # if response.status_code == 200:
+                #     _df_sale = self.fetch_df_sale_from_response(response)
+                # else:
+                #     _df_sale = self.process_404(model_name, province_id)
                 if _df_sale is not None:
                     print(len(df_sale))
                     df_sales.append(_df_sale)
@@ -247,8 +268,8 @@ if __name__ == '__main__':
     for k, v in self.province_dict.items():
         print(k, v)
     print('---')
-    province_name = '全国'
-    force = True
+    province_name = '上海'
+    force = False
     self.check_need_update(province_name)
     df_sale = self.get_df_sale_by_province_name(
         province_name=province_name, force=force)
@@ -262,33 +283,3 @@ if __name__ == '__main__':
 
 # %%
 # %%
-len(responses)
-# %%
-response = responses[3]
-# %%
-response
-# %%
-lenth = len(self.model_names)
-model_names = self.split_groups(
-    self.model_names, (lenth-1)//100+1)
-# %%
-
-import aiohttp
-import asyncio
-
-async def fetch(session, url, data):
-    async with session.post(url,data) as response:
-        return await response.text(), response.status
-
-async def main(url, data):
-    async with aiohttp.ClientSession() as session:
-        html, status = await(session, url, data)
-        return html, status
-
-url = self.url_api
-model_names = self.model_names[:200]
-data = self.make_data_payload(model_names, None)
-
-loop = asyncio.get_event_loop()
-result = loop.run_until_complete(main(url,data))
-
