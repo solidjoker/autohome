@@ -11,8 +11,6 @@ from selenium.webdriver.support import expected_conditions as EC
 
 from async_spider import Async_Spider
 
-
-
 # %%
 class Autohome_Segment(Async_Spider):
     name = 'autohome_segment'
