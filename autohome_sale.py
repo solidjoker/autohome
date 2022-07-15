@@ -142,7 +142,7 @@ class Autohome_Sale(Async_Spider):
         data = json.dumps(data)
         return data
 
-    def get_all_df_sales(self, force=False, opencsv=True):
+    def get_all_df_sales(self, opencsv=True):
         # 更新所有市场的销量
         province_names = [
             v for v in self.province_dict.values()
@@ -154,7 +154,7 @@ class Autohome_Sale(Async_Spider):
                 pbar.update(1)
                 time.sleep(self.sleep)
                 _df_sale = self.get_df_sale_by_province_name(
-                    province_name=province_name, force=force, opencsv=False)
+                    province_name=province_name, opencsv=False)
                 df_sales.append(_df_sale)
         df_sale = pd.concat(df_sales)
         if opencsv:
@@ -164,7 +164,7 @@ class Autohome_Sale(Async_Spider):
     @decorater_save_data
     def get_df_sale_by_province_name(self,
                                      province_name=None,
-                                     force=False,
+                                     model_names=None,
                                      opencsv=True):
         if province_name == '全国':
             province_id = None
@@ -172,19 +172,25 @@ class Autohome_Sale(Async_Spider):
             province_id = {v: k
                            for k, v in self.province_dict.items()
                            }.get(province_name)
-        df_sale = self.get_df_sale_by_province_id(province_id=province_id)
+        if model_names is None:
+            model_names = self.model_names
+
+        df_sale = self.get_df_sale_by_province_id(
+            province_id=province_id, model_names=model_names)
         if opencsv:
             self.df_to_csv(df_sale)
         return df_sale
 
     # key process
-    def get_df_sale_by_province_id(self, province_id=None):
+    def get_df_sale_by_province_id(self, province_id=None, model_names=None):
         # 车型分组
-        lenth = len(self.model_names)
-        model_names = self.split_groups(self.model_names,
+        if model_names is None:
+            model_names = self.model_names
+        lenth = len(model_names)
+        model_names = self.split_groups(model_names,
                                         (lenth - 1) // self.group_num + 1)
 
-        # 获取数据
+        # 获取数据l
         datas = [
             self.make_data_payload(model_name, province_id)
             for model_name in model_names
