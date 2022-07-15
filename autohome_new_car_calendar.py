@@ -18,8 +18,8 @@ from async_spider import Async_Spider
 class Autohome_New_Car_Calendar(Async_Spider):
     name = 'autohome_new_car_calendar'
 
-    def __init__(self, max_retry=3, async_num=100, threading_init_driver=False):
-        super().__init__(max_retry=max_retry, async_num=async_num, threading_init_driver=threading_init_driver)
+    def __init__(self, max_retry=3, concurrency=100, threading_init_driver=False):
+        super().__init__(max_retry=max_retry, concurrency=concurrency, threading_init_driver=threading_init_driver)
         self.init_preparetion()
 
     def init_preparetion(self):

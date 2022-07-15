@@ -18,11 +18,11 @@ class Autohome_Segment(Async_Spider):
     # 轻型卡车页面不在默认级别中
     def __init__(self,
                  max_retry=3,
-                 async_num=100,
+                 concurrency=100,
                  threading_init_driver=False,
                  verbose=True):
         super().__init__(max_retry=max_retry,
-                         async_num=async_num,
+                         concurrency=concurrency,
                          threading_init_driver=threading_init_driver)
         self.init_preparetion(verbose=verbose)
 
@@ -96,10 +96,10 @@ class Autohome_Segment(Async_Spider):
 class Autohome_Model(Async_Spider):
     name = 'autohome_model'
 
-    def __init__(self, max_retry=3, async_num=100, threading_init_driver=False,
+    def __init__(self, max_retry=3, concurrency=100, threading_init_driver=False,
                  verbose=True):
         super().__init__(max_retry=max_retry,
-                         async_num=async_num,
+                         concurrency=concurrency,
                          threading_init_driver=threading_init_driver)
         self.init_preparetion(verbose=verbose)
 

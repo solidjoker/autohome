@@ -23,11 +23,11 @@ class Autohome_Configuration(Async_Spider):
     def __init__(
         self,
         max_retry=3,
-        async_num=100,
+        concurrency=100,
         threading_init_driver=False,
     ):
         super().__init__(max_retry=max_retry,
-                         async_num=async_num,
+                         concurrency=concurrency,
                          threading_init_driver=threading_init_driver)
         self.init_preparetion()
 
