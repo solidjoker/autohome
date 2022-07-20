@@ -6,19 +6,18 @@ import json
 import time
 import pandas as pd
 import datetime
-import asyncio
 from tqdm.auto import tqdm
 from itertools import zip_longest
 
 
-from async_spider import Async_Spider
+from async_spider import Aiohttp_Spider
 from autohome_model import Autohome_Model
 from autohome_dealer import Autohome_Dealer
 
 
 # %%
 
-class Autohome_Sale(Async_Spider):
+class Autohome_Sale(Aiohttp_Spider):
     name = 'autohome_sale'
 
     def __init__(self,
@@ -195,12 +194,14 @@ class Autohome_Sale(Async_Spider):
             self.make_data_payload(model_name, province_id)
             for model_name in model_names
         ]
-        coros = asyncio.gather(*[self.aiohttp_spider.aiohttp_post_response(
-            url=url, data=data) for url, data in zip_longest([self.url_api], datas, fillvalue=self.url_api)])
-        results = self.aiohttp_spider.aiohttp_run_async_loop(coros)
+        coros = [self.aiohttp_post_response(
+            url=url, data=data) for url, data in zip_longest([self.url_api], datas, fillvalue=self.url_api)]
+        results = self.aiohttp_run_async_loop(coros)
 
+        # return results
         # check status
-        ck_jsons = self.aiohttp_spider.aiohttp_parse_response(results, 'json')
+        ck_jsons = self.aiohttp_parse_response(results, 'json')
+
         results_404 = []
         for js, model_name in zip(ck_jsons, model_names):
             if js is None:
@@ -211,7 +212,7 @@ class Autohome_Sale(Async_Spider):
         results = [r for r in results if r is not None]
         results += results_404
 
-        jsons = self.aiohttp_spider.aiohttp_parse_response(results, 'json')
+        jsons = self.aiohttp_parse_response(results, 'json')
         df_sale = pd.concat([self.fetch_df_sale_from_response_json(js)
                             for js in jsons])
 
@@ -233,9 +234,9 @@ class Autohome_Sale(Async_Spider):
             self.make_data_payload(model_name, province_id)
             for model_name in model_names
         ]
-        coros = asyncio.gather(*[self.aiohttp_spider.aiohttp_post_response(
-            url=url, data=data) for url, data in zip_longest([self.url_api], datas, fillvalue=self.url_api)])
-        results = self.aiohttp_spider.aiohttp_run_async_loop(coros)
+        coros = [self.aiohttp_post_response(
+            url=url, data=data) for url, data in zip_longest([self.url_api], datas, fillvalue=self.url_api)]
+        results = self.aiohttp_run_async_loop(coros)
         results = [r for r in results if r is not None]
         return results
 
@@ -262,9 +263,10 @@ if __name__ == '__main__':
     province_name = '全国'
     province_id = None
     results = self.get_df_sale_by_province_id(province_id=province_id)
-    print('df_sale %s has lenth: %s' % (province_name, len(df_sale)))
+    print('df_sale %s has lenth: %s' % (province_name, len(results)))
     results.to_pickle(self.dirname_output_sales.joinpath(
         'result_%s.pkl' % province_name))
+
 
 # %%
 # 根据省份名称更新销量
@@ -283,4 +285,6 @@ if __name__ == '__main__':
     print('df_sale %s has lenth: %s' % (province_name, len(df_sale)))
 
 # %%
+# %%
+results
 # %%
