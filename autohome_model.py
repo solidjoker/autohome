@@ -3,6 +3,7 @@ import re
 import time
 import pandas as pd
 import bs4
+import logging
 from tqdm.auto import tqdm
 
 from selenium.webdriver.support.wait import WebDriverWait
@@ -25,6 +26,7 @@ class Autohome_Segment(Async_Spider):
                          concurrency=concurrency,
                          threading_init_driver=threading_init_driver)
         self.init_preparetion(verbose=verbose)
+        self.console.setLevel(logging.CRITICAL)
 
     def init_preparetion(self, verbose=True):
         self.result_columns = ['segment_id', 'segment_name']
@@ -102,6 +104,7 @@ class Autohome_Model(Async_Spider):
                          concurrency=concurrency,
                          threading_init_driver=threading_init_driver)
         self.init_preparetion(verbose=verbose)
+        self.console.setLevel(logging.CRITICAL)
 
     def init_preparetion(self, verbose=True):
         self.result_columns = [
@@ -371,9 +374,16 @@ class Autohome_Model(Async_Spider):
                     bsobj) or counts <= 0:
                 break
 
+        bsobj = bs4.BeautifulSoup(driver.page_source, features='lxml')
+        uls_img = bsobj.select('.rank-img-ul')
+        lis_img = []
+        for ul in uls_img:
+            lis_img += ul.select('li')
+        lis_img = [li for li in lis_img if li.attrs.get('id')]
+
         if len(lis_img) < self.fetch_series_count_from_bsobj(bsobj):
             print('loading page error because of lack of lis_img!')
-            return
+            # return
 
         data = self.fetch_data_from_bsobj(bsobj)
         if len(data):
@@ -623,6 +633,5 @@ if __name__ == '__main__':
     self = Autohome_Model()
     series_count = self.get_series_count()
 
-# %%
 # %%
 # %%
