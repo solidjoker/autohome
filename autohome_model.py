@@ -1,6 +1,8 @@
 # %%
+from lib2to3.pgen2 import driver
 import re
 import time
+from winsound import Beep
 import pandas as pd
 import bs4
 import logging
@@ -11,8 +13,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 
 from async_spider import Async_Spider
+from selenium_func import Selenium_Func
 
 # %%
+
+
 class Autohome_Segment(Async_Spider):
     name = 'autohome_segment'
 
@@ -33,7 +38,7 @@ class Autohome_Segment(Async_Spider):
         self.url_car = 'https://www.autohome.com.cn/car/'
         self.result_pkl = self.dirname_output.joinpath('%s_result.pkl' %
                                                        self.name)
-        if verbose: 
+        if verbose:
             msgs = [
                 'self.result_pkl is %s' % self.result_pkl.as_posix(),
                 'you can use self.session or self.driver',
@@ -94,6 +99,7 @@ class Autohome_Segment(Async_Spider):
                  if len(ele.attrs) == 2 and '全部' not in ele.text.upper()]
         df_segment = pd.DataFrame(datas, columns=self.result_columns)
         return df_segment
+
 
 class Autohome_Model(Async_Spider):
     name = 'autohome_model'
@@ -283,15 +289,21 @@ class Autohome_Model(Async_Spider):
         data = []
         bm_compile = re.compile(r'.*?/brand-(\d*)-(\d*).*?.html.*')
         # ul_img 比ul_list多图片信息
-        uls_img = bsobj.select('.rank-img-ul')
-        lis_img = []
-        for ul in uls_img:
-            lis_img += ul.select('li')
-        lis_img = [li for li in lis_img if li.attrs.get('id')]
-        # uls_list = bsobj.select('.rank-list-ul')
-        # lis_list = self.bsobj_get_lis_from_uls(uls_list)
-        with tqdm(desc='fetch_data_from_bsobj', total=len(lis_img)) as pbar:
-            for li in lis_img:
+        # ul_img 动态加载了...
+        # uls_img = bsobj.select('.rank-img-ul')
+        # lis_img = []
+        # for ul in uls_img:
+        #     lis_img += ul.select('li')
+        # lis_img = [li for li in lis_img if li.attrs.get('id')]
+
+        uls_list = bsobj.select('.rank-list-ul')
+        lis_list = []
+        for ul in uls_list:
+            lis_list += ul.select('li')
+        lis_list = [li for li in lis_list if li.attrs.get('id')]
+
+        with tqdm(desc='fetch_data_from_bsobj', total=len(lis_list)) as pbar:
+            for li in lis_list:
                 pbar.update(1)
                 try:
                     li_h4 = li.find('h4')
@@ -311,9 +323,11 @@ class Autohome_Model(Async_Spider):
                     else:
                         model_price = li_h4_sibling_sibling.__str__()
                     model_url = self.url_model % model_id
-                    model_picture_url = 'https:%s' % li_img.attrs.get(
-                        'data-original')
-
+                    if li_img:
+                        model_picture_url = 'https:%s' % li_img.attrs.get(
+                            'data-original')
+                    else:
+                        model_picture_url = ''
                     brand_id, manu_id = bm_compile.match(
                         li_parent_previous_sibling.a['href']).groups()
                     manu_name = li_parent_previous_sibling.text
@@ -364,24 +378,24 @@ class Autohome_Model(Async_Spider):
         while True:
             self.driver_scroll_to_end(driver, locator)
             bsobj = bs4.BeautifulSoup(driver.page_source, features='lxml')
-            uls_img = bsobj.select('.rank-img-ul')
-            lis_img = []
-            for ul in uls_img:
-                lis_img += ul.select('li')
-            lis_img = [li for li in lis_img if li.attrs.get('id')]
+            uls_list = bsobj.select('.rank-list-ul')
+            lis_list = []
+            for ul in uls_list:
+                lis_list += ul.select('li')
+            lis_list = [li for li in lis_list if li.attrs.get('id')]
             counts -= 1
-            if len(lis_img) >= self.fetch_series_count_from_bsobj(
+            if len(lis_list) >= self.fetch_series_count_from_bsobj(
                     bsobj) or counts <= 0:
                 break
 
         bsobj = bs4.BeautifulSoup(driver.page_source, features='lxml')
-        uls_img = bsobj.select('.rank-img-ul')
-        lis_img = []
-        for ul in uls_img:
-            lis_img += ul.select('li')
-        lis_img = [li for li in lis_img if li.attrs.get('id')]
+        uls_list = bsobj.select('.rank-list-ul')
+        lis_list = []
+        for ul in uls_list:
+            lis_list += ul.select('li')
+        lis_list = [li for li in lis_list if li.attrs.get('id')]
 
-        if len(lis_img) < self.fetch_series_count_from_bsobj(bsobj):
+        if len(lis_list) < self.fetch_series_count_from_bsobj(bsobj):
             print('loading page error because of lack of lis_img!')
             # return
 
@@ -588,7 +602,8 @@ class Autohome_Model(Async_Spider):
         series_count = pd.DataFrame([[k, v]
                                      for k, v in series_count_dict.items()],
                                     columns=['url', 'series_count'])
-        if opencsv: self.df_to_csv(series_count)
+        if opencsv:
+            self.df_to_csv(series_count)
         return series_count
 
     def fetch_series_count_from_bsobj(self, bsobj):
