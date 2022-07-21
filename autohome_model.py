@@ -1,11 +1,18 @@
+# %% [markdown]
+# --- 20220721: 更换bsobj解析库为html5lib
+# - cmd > pip install html5lib
+# - bsobj = bs4.BeautifulSoup(response.content, features='html5lib')
+
+
 # %%
-from lib2to3.pgen2 import driver
+import pickle
 import re
 import time
-from winsound import Beep
-import pandas as pd
 import bs4
 import logging
+import string
+import pandas as pd
+from pyquery import PyQuery as pq
 from tqdm.auto import tqdm
 
 from selenium.webdriver.support.wait import WebDriverWait
@@ -13,7 +20,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 
 from async_spider import Async_Spider
-from selenium_func import Selenium_Func
 
 # %%
 
@@ -26,12 +32,13 @@ class Autohome_Segment(Async_Spider):
                  max_retry=3,
                  concurrency=100,
                  threading_init_driver=False,
+                 logging_level=logging.ERROR,
                  verbose=True):
         super().__init__(max_retry=max_retry,
                          concurrency=concurrency,
-                         threading_init_driver=threading_init_driver)
+                         threading_init_driver=threading_init_driver,
+                         logging_level=logging_level)
         self.init_preparetion(verbose=verbose)
-        self.console.setLevel(logging.CRITICAL)
 
     def init_preparetion(self, verbose=True):
         self.result_columns = ['segment_id', 'segment_name']
@@ -76,7 +83,7 @@ class Autohome_Segment(Async_Spider):
             df_result = self.update_df_segments()
         else:
             df_result = pd.DataFrame(columns=self.result_columns)
-        df_result = df_exist.append(df_result)
+        df_result = pd.concat([df_exist, df_result])
         df_result = df_result.drop_duplicates('segment_id')
         # 保存
         self.sort_save_result(df_result, clipboard=clipboard)
@@ -92,7 +99,7 @@ class Autohome_Segment(Async_Spider):
         return df_segments
 
     def get_df_segment_from_response(self, response):
-        bsobj = bs4.BeautifulSoup(response.content, features='lxml')
+        bsobj = bs4.BeautifulSoup(response.content, features='html5lib')
         dl = bsobj.find('dl', {'class': 'caricon-list'})
         hrefs = dl.find_all('a')
         datas = [[ele.attrs['href'][1:-1], ele.text] for ele in hrefs
@@ -105,12 +112,12 @@ class Autohome_Model(Async_Spider):
     name = 'autohome_model'
 
     def __init__(self, max_retry=3, concurrency=100, threading_init_driver=False,
-                 verbose=True):
+                 logging_level=logging.ERROR, verbose=True):
         super().__init__(max_retry=max_retry,
                          concurrency=concurrency,
-                         threading_init_driver=threading_init_driver)
+                         threading_init_driver=threading_init_driver,
+                         logging_level=logging_level)
         self.init_preparetion(verbose=verbose)
-        self.console.setLevel(logging.CRITICAL)
 
     def init_preparetion(self, verbose=True):
         self.result_columns = [
@@ -132,9 +139,18 @@ class Autohome_Model(Async_Spider):
         self.url_wk = 'https://www.autohome.com.cn/car/0_0-0.0_0.0-0-0-9-0-0-0-0-0/'  # 微卡
         self.url_model = 'https://www.autohome.com.cn/%s/'
         self.url_test = 'https://www.autohome.com.cn/suva/'
+        self.url_list_by_letter = 'https://www.autohome.com.cn/grade/carhtml/%s.html'
+        self.url_img_by_letter = 'https://www.autohome.com.cn/grade/carhtml/%s_photo.html'
+
+        # string.ascii_uppercase
 
         self.result_pkl = self.dirname_output.joinpath('%s_result.pkl' %
                                                        self.name)
+
+        self.brand_dict_pkl = self.dirname_output.joinpath(
+            '%s_brand_dict_pkl' % self.name)
+        self.manu_dict_pkl = self.dirname_output.joinpath(
+            '%s_manu_dict_pkl' % self.name)
 
         if verbose:
             msgs = [
@@ -206,10 +222,78 @@ class Autohome_Model(Async_Spider):
             if len(model_ids):
                 df_remain_result = self.get_df_models_by_url_model(
                     model_ids, save=False, opencsv=False)
-                df_result = df_exist.append(df_remain_result).drop_duplicates(
+                df_result = pd.concat([df_exist, df_remain_result])
+                df_result = df_result.drop_duplicates(
                     subset=['model_id'], keep='last')
             else:
                 df_result = df_exist
+            # 保存
+            if save:
+                self.sort_save_result(df_result, clipboard=False)
+            if opencsv:
+                self.df_to_csv(df_result)
+            return df_result
+
+    def get_df_all_models_by_letter(self, save=True, opencsv=True):
+        # 20220721 更新
+        # 通过字母页面更新所有车型
+        coroutines = [self.async_get_response(
+            self.url_img_by_letter % l) for l in string.ascii_uppercase]
+        tasks = self.run_async_loop(coroutines, tqdm_desc='get_df_all_models')
+        results = [task.result() for task in tasks]
+        responses = [result for result in results if result]
+
+        lis_type = '.rank-img-ul'
+
+        datas = [self.fetch_data_from_response(
+            response, lis_type=lis_type) for response in responses]
+        df_datas = [pd.DataFrame(data, columns=self.result_columns)
+                    for data in datas]
+
+        self.brand_dict = {}
+        self.manu_dict = {}
+        print('update brand_dict and manu_dict')
+        for response in responses:
+            self.update_brand_manu_dict(
+                response, self.brand_dict, self.manu_dict)
+        with open(self.brand_dict_pkl, 'wb') as f:
+            pickle.dump(self.brand_dict, f)
+        with open(self.manu_dict_pkl, 'wb') as f:
+            pickle.dump(self.manu_dict, f)
+
+        if len(df_datas):
+            df_all_models = pd.concat(df_datas)
+            df_all_models = df_all_models.drop_duplicates(
+                subset=['model_id'], keep='first')
+            # 更新segment_id, segment_name
+            df_exist = self.read_exist_data(False)
+            self.segment_dict = {
+                k: v
+                for k, v in df_models[['segment_id', 'segment_name'
+                                       ]].drop_duplicates().values
+            }
+            df_all_models['segment_id'] = df_all_models['model_id'].apply(
+                lambda key: self.df_vlookup(
+                    df_exist, 'model_id', 'segment_id', key, top=True))
+            df_all_models['segment_name'] = df_all_models['model_id'].apply(
+                lambda key: self.df_vlookup(
+                    df_exist, 'model_id', 'segment_name', key, top=True))
+
+            # 判断是否有遗留任务
+            df_misses = df_all_models[pd.isna(
+                df_all_models['segment_id'])].copy()
+            if len(df_misses):
+                df_misses['segment_id'] = df_misses['model_url'].apply(
+                    lambda x: self.get_segment_id_from_url(x))
+                df_misses['segment_name'] = df_misses['segment_id'].apply(
+                    lambda x: self.segment_dict.get(x))
+
+                df_result = pd.concat([df_all_models, df_misses])
+                df_result = df_result.drop_duplicates(
+                    subset=['model_id'], keep='last')
+            else:
+                df_result = df_exist
+
             # 保存
             if save:
                 self.sort_save_result(df_result, clipboard=False)
@@ -222,6 +306,9 @@ class Autohome_Model(Async_Spider):
         # 协程运行, 速度快，但会有2个问题:
         # 1. 页面动态加载, 如: https://www.autohome.com.cn/mpvb/
         # 2. 无法加载车型, 如: https://www.autohome.com.cn/13/, https://www.autohome.com.cn/6786/
+
+        lis_type = '.rank-img-ul'  # 多出model_pic_url信息
+        # lis_type = '.rank-list-ul'
         coroutines = [
             self.async_get_response(
                 self.url_segment % segment_id,
@@ -243,10 +330,12 @@ class Autohome_Model(Async_Spider):
                 max_retry=self.max_retry,
             ))
         tasks = self.run_async_loop(coroutines, tqdm_desc='async_get_model')
+
         datas = []
         responses_miss = []
         for task in tasks:
-            data = self.fetch_data_from_response(task.result())
+            data = self.fetch_data_from_response(
+                task.result(), lis_type=lis_type)
             if data:
                 datas.append(data)
             else:
@@ -271,9 +360,10 @@ class Autohome_Model(Async_Spider):
 
         return df_models
 
-    def fetch_data_from_response(self, response):
-        bsobj = bs4.BeautifulSoup(response.content, features='lxml')
-        data = self.fetch_data_from_bsobj(bsobj)
+    def fetch_data_from_response(self, response, lis_type='.rank-list-ul'):
+        print('process data of response from url:%s' % response.url)
+        bsobj = bs4.BeautifulSoup(response.content, features='html5lib')
+        data = self.fetch_data_from_bsobj(bsobj, lis_type=lis_type)
         if len(data):
             if hasattr(response, 'meta'):
                 segment_id = response.meta['segment_id']
@@ -284,7 +374,7 @@ class Autohome_Model(Async_Spider):
             data = [d + [segment_id, segment_name] for d in data]
             return data
 
-    def fetch_data_from_bsobj(self, bsobj):
+    def fetch_data_from_bsobj(self, bsobj, lis_type='.rank-list-ul'):
         # ul > li > h4
         data = []
         bm_compile = re.compile(r'.*?/brand-(\d*)-(\d*).*?.html.*')
@@ -296,13 +386,9 @@ class Autohome_Model(Async_Spider):
         #     lis_img += ul.select('li')
         # lis_img = [li for li in lis_img if li.attrs.get('id')]
 
-        uls_list = bsobj.select('.rank-list-ul')
-        lis_list = []
-        for ul in uls_list:
-            lis_list += ul.select('li')
-        lis_list = [li for li in lis_list if li.attrs.get('id')]
+        lis_list = self.fetch_lis_from_bsobj(bsobj, lis_type=lis_type)
 
-        with tqdm(desc='fetch_data_from_bsobj', total=len(lis_list)) as pbar:
+        with tqdm(desc='process_data_from_bsobj', total=len(lis_list)) as pbar:
             for li in lis_list:
                 pbar.update(1)
                 try:
@@ -350,6 +436,9 @@ class Autohome_Model(Async_Spider):
         return data
 
     def fetch_data_from_selenium(self, driver, response):
+        '''
+        20220720 改版以后bs4有动态加载问题
+        '''
         # response 包含segment_id, segment_name
         driver.maximize_window()
         driver.refresh()
@@ -362,44 +451,38 @@ class Autohome_Model(Async_Spider):
                       0.5).until(EC.presence_of_element_located(locator))
         time.sleep(2)
         # 图片模式
-        icon_locator = (By.XPATH, '//i[@class="icon16 icon16-img"]/..')
-        icon_img = WebDriverWait(driver, 5, 0.5).until(
-            EC.presence_of_element_located(icon_locator))
-        icon_img.click()
+        # icon_locator = (By.XPATH, '//i[@class="icon16 icon16-img"]/..')
+        # icon_img = WebDriverWait(driver, 5, 0.5).until(
+        # EC.presence_of_element_located(icon_locator))
+        # icon_img.click()
+        # lis_type = '.rank-img-ul'
+
         # 列表模式
-        # icon_locator = (By.XPATH, '//i[@class="icon16 icon16-list"]/..')
-        # i_list = WebDriverWait(driver, 5,
-        #                    0.5).until(EC.presence_of_element_located(icon_locator))
-        # i_list.click()
+        icon_locator = (By.XPATH, '//i[@class="icon16 icon16-list"]/..')
+        i_list = WebDriverWait(driver, 5,
+                               0.5).until(EC.presence_of_element_located(icon_locator))
+        i_list.click()
+        lis_type = '.rank-list-ul'
         time.sleep(2)
-
         # 确保加载
-        counts = 5
-        while True:
-            self.driver_scroll_to_end(driver, locator)
-            bsobj = bs4.BeautifulSoup(driver.page_source, features='lxml')
-            uls_list = bsobj.select('.rank-list-ul')
-            lis_list = []
-            for ul in uls_list:
-                lis_list += ul.select('li')
-            lis_list = [li for li in lis_list if li.attrs.get('id')]
-            counts -= 1
-            if len(lis_list) >= self.fetch_series_count_from_bsobj(
-                    bsobj) or counts <= 0:
-                break
+        # counts = 5
+        # while True:
+        #     self.driver_scroll_to_end(driver, locator)
+        #     bsobj = bs4.BeautifulSoup(driver.page_source, features='html5lib')
+        #     lis_list = self.fetch_lis_from_bsobj(bsobj, lis_type=lis_type)
+        #     counts -= 1
+        #     if len(lis_list) >= self.fetch_series_count_from_bsobj(
+        #             bsobj) or counts <= 0:
+        #         break
 
-        bsobj = bs4.BeautifulSoup(driver.page_source, features='lxml')
-        uls_list = bsobj.select('.rank-list-ul')
-        lis_list = []
-        for ul in uls_list:
-            lis_list += ul.select('li')
-        lis_list = [li for li in lis_list if li.attrs.get('id')]
-
+        self.scroll_page(driver, False, 2)
+        bsobj = bs4.BeautifulSoup(driver.page_source, features='html5lib')
+        lis_list = self.fetch_lis_from_bsobj(bsobj, lis_type=lis_type)
         if len(lis_list) < self.fetch_series_count_from_bsobj(bsobj):
             print('loading page error because of lack of lis_img!')
             # return
 
-        data = self.fetch_data_from_bsobj(bsobj)
+        data = self.fetch_data_from_bsobj(bsobj, lis_type=lis_type)
         if len(data):
             if hasattr(response, 'meta'):
                 segment_id = response.meta['segment_id']
@@ -414,16 +497,25 @@ class Autohome_Model(Async_Spider):
 
         # 预备查询字典
         df_models = self.read_exist_data(False)
-        self.brand_dict = {
-            k: v
-            for k, v in df_models[['brand_id', 'brand_name'
-                                   ]].drop_duplicates().values
-        }
-        self.manu_dict = {
-            k: v
-            for k, v in df_models[['manu_id', 'manu_name'
-                                   ]].drop_duplicates().values
-        }
+        if self.brand_dict_pkl.exists():
+            with open(self.brand_dict_pkl, 'rb') as f:
+                self.brand_dict = pickle.load(f)
+        else:
+            self.brand_dict = {
+                k: v
+                for k, v in df_models[['brand_id', 'brand_name'
+                                       ]].drop_duplicates().values
+            }
+        if self.manu_dict_pkl.exists():
+            with open(self.manu_dict_pkl, 'rb') as f:
+                self.manu_dict = pickle.load(f)
+        else:
+            self.manu_dict = {
+                k: v
+                for k, v in df_models[['manu_id', 'manu_name'
+                                       ]].drop_duplicates().values
+            }
+
         self.segment_dict = {
             k: v
             for k, v in df_models[['segment_id', 'segment_name'
@@ -435,17 +527,17 @@ class Autohome_Model(Async_Spider):
                                     meta={'model_id': model_id})
             for model_id in model_ids
         ]
-        tasks = self.run_async_loop(coroutines)
-        datas = []
-        for task in tasks:
-            response = task.result()
-            bsobj = bs4.BeautifulSoup(response.content, features='lxml')
-            data = self.fetch_data_by_url_model_from_bsobj(bsobj)
-            if data:
-                datas.append(data)
+        tasks = self.run_async_loop(
+            coroutines, tqdm_desc='get_df_models_by_url', record=False)
+        results = [task.result() for task in tasks]
+        responses = [result for result in results if result]
+        datas = [self.fetch_data_by_url_model_from_bsobj(bs4.BeautifulSoup(
+            response.content, features='html5lib')) for response in responses]
+        df_datas = [pd.DataFrame(data, columns=self.result_columns)
+                    for data in datas]
 
-        if len(datas):
-            df_result = pd.DataFrame(datas, columns=self.result_columns)
+        if len(df_datas):
+            df_result = pd.concat(df_datas)
         else:
             df_result = pd.DataFrame()
 
@@ -491,7 +583,7 @@ class Autohome_Model(Async_Spider):
                 brand_id = {v: k
                             for k, v in self.brand_dict.items()
                             }.get(brand_name)
-                data = [
+                data = [[
                     model_id,
                     model_name,
                     model_price,
@@ -504,7 +596,7 @@ class Autohome_Model(Async_Spider):
                     brand_name,
                     segment_id,
                     segment_name,
-                ]
+                ]]
                 return data
             except Exception as e:
                 print(e)
@@ -555,7 +647,7 @@ class Autohome_Model(Async_Spider):
                               for k, v in self.segment_dict.items()
                               }.get(segment_name)
 
-                data = [
+                data = [[
                     model_id,
                     model_name,
                     model_price,
@@ -568,7 +660,7 @@ class Autohome_Model(Async_Spider):
                     brand_name,
                     segment_id,
                     segment_name,
-                ]
+                ]]
                 return data
             except Exception as e:
                 print(e)
@@ -595,7 +687,7 @@ class Autohome_Model(Async_Spider):
         series_count_dict = {}
         for task in tasks:
             response = task.result()
-            bsobj = bs4.BeautifulSoup(response.content, features='lxml')
+            bsobj = bs4.BeautifulSoup(response.content, features='html5lib')
             count = self.fetch_series_count_from_bsobj(bsobj)
             series_count_dict[response.url.__str__()] = count
 
@@ -611,6 +703,73 @@ class Autohome_Model(Async_Spider):
         if count:
             result = int(count.text)
             return result
+
+    def fetch_lis_from_bsobj(self, bsobj, lis_type='.rank-list-ul'):
+        # lis_type = '.rank-list-ul' or lis_type = '.rank-img-ul'
+        uls_list = bsobj.select(lis_type)
+        lis_list = []
+        for ul in uls_list:
+            lis_list += ul.select('li')
+        lis_list = [li for li in lis_list if li.attrs.get('id')]
+        return lis_list
+
+    def update_brand_manu_dict(self, response, brand_dict, manu_dict):
+        # get_df_all_models_by_letter 中更新self.brand_dict, self.manu_dict
+        bsobj = bs4.BeautifulSoup(response.content, features='html5lib')
+        dls = [dl for dl in bsobj.find_all(
+            'dl') if dl.attrs.get('id') and dl.attrs.get('olr')]
+        if len(dls) == 0:
+            return
+
+        brand_compile = re.compile(r'.*?/brand-(\d*).*?.html.*')
+        manu_compile = re.compile(r'.*?/brand-(\d*)-(\d*).*?.html.*')
+
+        for dl in dls:
+            # 更新brand_dict
+            div_brand = dl.div
+            try:
+                brand_name = div_brand.text
+                brand_id = brand_compile.match(
+                    div_brand.a.attrs['href']).groups()[0]
+                brand_dict |= {brand_id: brand_name}
+            except:
+                pass
+            # 更新manu_dict
+            divs_manu = dl.find_all('div', {'class': 'h3-tit'})
+            for div_manu in divs_manu:
+                try:
+                    manu_name = div_manu.text
+                    manu_id = manu_compile.match(
+                        div_manu.a.attrs['href']).groups()[1]
+                    manu_dict |= {manu_id: manu_name}
+                except:
+                    pass
+
+    def get_segment_id_from_url(self, url):
+        response = self.session.get(url)
+        bsobj = bs4.BeautifulSoup(
+            response.content, features='html5lib')
+        if self.is_stop_version_from_bsobj(bsobj):
+            # url_model = 'https://www.autohome.com.cn/4830/'
+            try:
+                div = bsobj.find('div', {'class': 'path'})
+                segment, _ = div.find_all('a')[-2:]
+                segment_id = segment['href'].replace('/', '')
+                return segment_id
+            except Exception as e:
+                pass
+        else:
+            # url_model = 'https://www.autohome.com.cn/6777/'
+            try:
+                segment_name = bsobj.find('dd', {
+                    'class': 'type'
+                }).span.text.strip()
+                segment_id = {v: k
+                              for k, v in self.segment_dict.items()
+                              }.get(segment_name)
+                return segment_id
+            except Exception as e:
+                print(e)
 
 
 # %%
@@ -635,7 +794,9 @@ if __name__ == '__main__':
     self = Autohome_Model()
     force = input('更新df_all_models? 输入y强制更新, 其他读取现有数据')
     if force.upper() == 'Y':
-        df_all_models = self.get_df_all_models_by_selenium(save=True)
+        # df_all_models = self.get_df_all_models_by_selenium(save=True)
+        df_all_models = self.get_df_all_models_by_letter(save=True)
+
 # %%
 # 通过model_ids页面更新
 if __name__ == '__main__':
@@ -648,5 +809,4 @@ if __name__ == '__main__':
     self = Autohome_Model()
     series_count = self.get_series_count()
 
-# %%
 # %%
